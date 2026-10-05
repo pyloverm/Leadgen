@@ -4,28 +4,28 @@ import {
   Check,
   Copy,
   ExternalLink,
-  Gauge,
   Globe,
+  History,
   Loader2,
   Mail,
   MapPin,
   Phone,
   RefreshCw,
   Search,
+  Sparkles,
   X,
   XCircle,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { formatDistance } from "@/lib/geo";
-import { googleSearchUrl } from "@/lib/leads";
+import { googleSearchUrl, type LeadView } from "@/lib/leads";
 import { buildPitch } from "@/lib/pitch";
-import type { AuditCheck, PageSpeedResult } from "@/lib/types";
+import type { AuditCheck } from "@/lib/types";
 import { displayHost } from "@/lib/urls";
-import type { LeadRow } from "./LeadsTable";
 import { OpportunityTag, ScoreBar, StatusBadge } from "./StatusBadge";
 
 interface Props {
-  row: LeadRow;
+  row: LeadView;
   locality?: string;
   onClose: () => void;
   onReaudit: (url: string) => void;
@@ -73,20 +73,26 @@ function CopyButton({ text, label = "Copier" }: { text: string; label?: string }
   );
 }
 
-function PsiScore({ label, value }: { label: string; value?: number }) {
-  const color = value === undefined ? "text-slate-400" : value < 50 ? "text-rose-600" : value < 90 ? "text-amber-600" : "text-emerald-600";
+const yearMonth = (ym: string) => {
+  const [y, m] = ym.split("-");
+  return new Date(Number(y), Number(m) - 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+};
+
+function ToolLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-lg bg-slate-50 p-2 text-center">
-      <div className={`text-lg font-bold tabular-nums ${color}`}>{value ?? "—"}</div>
-      <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
-    </div>
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+    >
+      <ExternalLink className="size-3.5" /> {children}
+    </a>
   );
 }
 
 export function LeadDrawer({ row, locality, onClose, onReaudit }: Props) {
-  const { lead, status, opportunity, audit } = row;
-  const [psi, setPsi] = useState<PageSpeedResult | null>(null);
-  const [psiLoading, setPsiLoading] = useState(false);
+  const { lead, status, opportunity, potential, audit, website, discovered, confirmed, discovery } = row;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -94,37 +100,22 @@ export function LeadDrawer({ row, locality, onClose, onReaudit }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  async function runPsi() {
-    if (!lead.website) return;
-    setPsiLoading(true);
-    try {
-      const res = await fetch("/api/pagespeed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: audit?.finalUrl ?? lead.website }),
-      });
-      const data = await res.json();
-      setPsi(res.ok ? data : { url: lead.website, strategy: "mobile", error: data.error });
-    } catch (err) {
-      setPsi({ url: lead.website, strategy: "mobile", error: (err as Error).message });
-    } finally {
-      setPsiLoading(false);
-    }
-  }
-
-  const emails = Array.from(new Set([lead.email, ...(audit?.emails ?? [])].filter(Boolean))) as string[];
-  const phones = Array.from(new Set([lead.phone, ...(audit?.phones ?? [])].filter(Boolean))) as string[];
-  const socials = Array.from(new Set([...lead.socials, ...(audit?.socials ?? [])]));
+  // Contacts read on a guessed (unconfirmed) website may belong to a homonym: keep them apart.
+  const siteContacts = confirmed ? audit : undefined;
+  const emails = Array.from(new Set([lead.email, ...(siteContacts?.emails ?? [])].filter(Boolean))) as string[];
+  const phones = Array.from(new Set([lead.phone, ...(siteContacts?.phones ?? [])].filter(Boolean))) as string[];
+  const socials = Array.from(new Set([...lead.socials, ...(siteContacts?.socials ?? [])]));
+  const unconfirmedContacts = !confirmed && audit ? [...audit.phones, ...audit.emails] : [];
   const failed = audit?.checks.filter((c) => !c.ok).sort((a, b) => b.penalty - a.penalty) ?? [];
   const passed = audit?.checks.filter((c) => c.ok) ?? [];
-  const pitch = buildPitch(lead, status, audit);
+  const pitch = buildPitch(row);
 
   return (
     <aside className="fixed inset-y-0 right-0 z-[1000] flex w-full max-w-[480px] flex-col border-l border-slate-200 bg-white shadow-2xl">
       <header className="flex items-start gap-3 px-5 pb-4 pt-5">
         <div className="min-w-0 flex-1">
           <div className="mb-1 flex items-center gap-2">
-            <OpportunityTag value={opportunity} />
+            <OpportunityTag value={opportunity} potential={potential} />
             <StatusBadge status={status} long />
           </div>
           <h2 className="text-lg font-semibold leading-tight text-slate-900">{lead.name}</h2>
@@ -173,11 +164,11 @@ export function LeadDrawer({ row, locality, onClose, onReaudit }: Props) {
                 </a>
               </li>
             ))}
-            {lead.website && (
+            {website && (
               <li className="flex items-center gap-2">
-                <Globe className="size-4 shrink-0 text-slate-400" />
-                <a href={lead.website} target="_blank" rel="noreferrer" className="truncate text-indigo-600 hover:underline">
-                  {displayHost(lead.website)}
+                {discovered ? <Sparkles className="size-4 shrink-0 text-violet-500" /> : <Globe className="size-4 shrink-0 text-slate-400" />}
+                <a href={website} target="_blank" rel="noreferrer" className="truncate text-indigo-600 hover:underline">
+                  {displayHost(website)}
                 </a>
               </li>
             )}
@@ -189,6 +180,9 @@ export function LeadDrawer({ row, locality, onClose, onReaudit }: Props) {
               </li>
             ))}
             {!phones.length && !emails.length && <li className="text-xs text-slate-400">Aucun téléphone ni email connu.</li>}
+            {unconfirmedContacts.length > 0 && (
+              <li className="text-xs text-amber-700">Sur le site à confirmer : {unconfirmedContacts.join(", ")}</li>
+            )}
             {lead.openingHours && <li className="text-xs text-slate-500">Horaires : {lead.openingHours}</li>}
           </ul>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -219,14 +213,61 @@ export function LeadDrawer({ row, locality, onClose, onReaudit }: Props) {
               </a>
             )}
           </div>
-          {status === "none" && lead.source === "osm" && (
-            <p className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
-              OpenStreetMap n&apos;indique pas de site : vérifiez sur Google avant de démarcher.
-            </p>
-          )}
         </Section>
 
-        {lead.website && (
+        {!lead.website && (
+          <Section title="Recherche automatique du site">
+            {status === "searching" ? (
+              <p className="flex items-center gap-2 text-sm text-slate-500">
+                <Loader2 className="size-4 animate-spin" /> Test des domaines possibles…
+              </p>
+            ) : !discovery ? (
+              <p className="text-sm text-slate-500">Pas encore lancée (lancez l&apos;analyse depuis la barre d&apos;outils).</p>
+            ) : discovery.website ? (
+              <div className="rounded-lg bg-violet-50 p-3 text-sm text-violet-900">
+                <p className="font-medium">
+                  Site trouvé : {displayHost(discovery.website)}{" "}
+                  <span className="text-xs font-normal">
+                    ({discovery.method === "email" ? "via le domaine de l'email" : "nom de domaine deviné"} · confiance{" "}
+                    {discovery.confidence === "high" ? "élevée" : "moyenne, à confirmer"})
+                  </span>
+                </p>
+                {discovery.evidence.length > 0 && (
+                  <ul className="mt-1 space-y-0.5 text-xs">
+                    {discovery.evidence.map((e) => (
+                      <li key={e} className="flex items-center gap-1.5">
+                        <Check className="size-3.5" /> {e}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-600">
+                Aucun site trouvé après {discovery.checked} noms de domaine testés (email, nom, nom + ville).{" "}
+                <span className="text-slate-400">Vérifiez quand même sur Google avant d&apos;appeler.</span>
+              </p>
+            )}
+            {discovery?.rejected && discovery.rejected.length > 0 && (
+              <div className="mt-2 text-xs text-slate-500">
+                <p className="font-medium text-slate-600">Homonymes écartés :</p>
+                <ul className="mt-0.5 space-y-0.5">
+                  {discovery.rejected.map((r) => (
+                    <li key={r}>• {r}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {discovery && discovery.parked.length > 0 && (
+              <p className="mt-2 rounded-md bg-orange-50 px-2 py-1.5 text-xs text-orange-800">
+                Domaine au nom du commerce réservé mais sans site : <strong>{discovery.parked.join(", ")}</strong> (peut-être le
+                leur : excellent argument).
+              </p>
+            )}
+          </Section>
+        )}
+
+        {website && (
           <Section title="Audit du site">
             {!audit ? (
               <p className="flex items-center gap-2 text-sm text-slate-500">
@@ -249,7 +290,7 @@ export function LeadDrawer({ row, locality, onClose, onReaudit }: Props) {
                   )}
                   <button
                     type="button"
-                    onClick={() => onReaudit(lead.website!)}
+                    onClick={() => onReaudit(website)}
                     className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                   >
                     <RefreshCw className="size-3.5" /> Relancer
@@ -332,36 +373,32 @@ export function LeadDrawer({ row, locality, onClose, onReaudit }: Props) {
               </>
             )}
 
-            <div className="mt-4 rounded-lg border border-slate-200 p-3">
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-700">
-                  <Gauge className="size-4" /> Google PageSpeed (mobile)
-                </span>
-                <button
-                  type="button"
-                  onClick={runPsi}
-                  disabled={psiLoading}
-                  className="inline-flex items-center gap-1 rounded-md bg-slate-900 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-60"
-                >
-                  {psiLoading && <Loader2 className="size-3.5 animate-spin" />}
-                  {psiLoading ? "Analyse (~30 s)…" : psi ? "Relancer" : "Lancer"}
-                </button>
-              </div>
-              {psi?.error && <p className="mt-2 text-xs text-rose-600">{psi.error}</p>}
-              {psi && !psi.error && (
-                <div className="mt-2 grid grid-cols-4 gap-1.5">
-                  <PsiScore label="Perf." value={psi.performance} />
-                  <PsiScore label="Access." value={psi.accessibility} />
-                  <PsiScore label="Pratiques" value={psi.bestPractices} />
-                  <PsiScore label="SEO" value={psi.seo} />
-                  {psi.lcpMs !== undefined && (
-                    <p className="col-span-4 text-xs text-slate-500">
-                      Affichage principal (LCP) : {(psi.lcpMs / 1000).toFixed(1)} s
-                      {psi.cls !== undefined && ` · Stabilité (CLS) : ${psi.cls.toFixed(2)}`}
-                    </p>
-                  )}
+            {audit?.history && (
+              <div className="mt-4 flex gap-2 rounded-lg border border-slate-200 p-3 text-xs text-slate-700">
+                <History className="size-4 shrink-0 text-slate-400" />
+                <div>
+                  <p>
+                    En ligne depuis <strong>{yearMonth(audit.history.firstSeen)}</strong> · page d&apos;accueil inchangée depuis{" "}
+                    <strong>{yearMonth(audit.history.unchangedSince)}</strong>
+                  </p>
+                  <p className="text-slate-400">
+                    {audit.history.captures} relevés mensuels de l&apos;Internet Archive, dernier en {yearMonth(audit.history.lastCapture)}
+                  </p>
                 </div>
-              )}
+              </div>
+            )}
+            {audit?.assets && audit.assets.imagesChecked > 0 && (
+              <p className="mt-2 text-xs text-slate-500">
+                Images : {audit.assets.imagesChecked} mesurées,{" "}
+                {(audit.assets.imageBytes / 1e6).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Mo au total ·{" "}
+                {audit.assets.mediaQueries ? "CSS responsive détecté" : "aucune règle CSS responsive trouvée"}
+              </p>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <ToolLink href={`https://pagespeed.web.dev/analysis?url=${encodeURIComponent(audit?.finalUrl ?? website)}&form_factor=mobile`}>
+                PageSpeed (web)
+              </ToolLink>
+              <ToolLink href={`https://web.archive.org/web/*/${displayHost(website)}`}>Historique Wayback</ToolLink>
             </div>
           </Section>
         )}

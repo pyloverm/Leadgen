@@ -3,12 +3,21 @@
 import { AlertTriangle, Download, Loader2, Play, Search, Square, Target } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CATEGORY_GROUPS, ALL_GROUP_IDS } from "@/lib/categories";
+import { ALL_GROUP_IDS, CATEGORY_GROUPS } from "@/lib/categories";
 import { downloadText, leadsToCsv } from "@/lib/csv";
-import { OPPORTUNITY_META, opportunity, websiteStatus } from "@/lib/leads";
-import type { AuditResult, CategoryGroupId, GeocodeResult, GeoPoint, Lead, SearchResponse, WebsiteStatus } from "@/lib/types";
+import { buildLeadView, effectiveWebsite, type LeadView } from "@/lib/leads";
+import type {
+  AuditResult,
+  CategoryGroupId,
+  DiscoveryResult,
+  GeocodeResult,
+  GeoPoint,
+  Lead,
+  SearchResponse,
+  WebsiteStatus,
+} from "@/lib/types";
 import { LeadDrawer } from "./LeadDrawer";
-import { LeadsTable, type LeadRow } from "./LeadsTable";
+import { LeadsTable } from "./LeadsTable";
 import { SearchPanel, type SearchSettings } from "./SearchPanel";
 
 const MapView = dynamic(() => import("./MapView"), {
@@ -16,24 +25,24 @@ const MapView = dynamic(() => import("./MapView"), {
   loading: () => <div className="grid h-full place-items-center bg-slate-100 text-sm text-slate-400">Chargement de la carte…</div>,
 });
 
-const STORAGE_KEY = "leadgen:v1";
-const AUDIT_CONCURRENCY = 4;
+const STORAGE_KEY = "leadgen:v2";
+const CONCURRENCY = 4;
 
 type StatusFilter = "all" | "hot" | WebsiteStatus;
-type SortKey = "opportunity" | "distance" | "name" | "score";
+type SortKey = "potential" | "distance" | "name" | "score";
 
 interface Saved {
   center: GeocodeResult | null;
   settings: SearchSettings;
   leads: Lead[];
   warnings: string[];
+  discoveries: Record<string, DiscoveryResult>;
   audits: Record<string, AuditResult>;
 }
 
 const DEFAULT_SETTINGS: SearchSettings = {
   radius: 1000,
   groups: ALL_GROUP_IDS.filter((g) => g !== "auto"),
-  source: "osm",
   excludeChains: true,
   autoAudit: true,
 };
@@ -47,8 +56,21 @@ function loadSaved(): Partial<Saved> | null {
   }
 }
 
+/** A lead needs work when its website is unknown and not searched yet, or known but not audited. */
+function needsWork(lead: Lead, discoveries: Record<string, DiscoveryResult>, audits: Record<string, AuditResult>): boolean {
+  const website = effectiveWebsite(lead, discoveries[lead.id]);
+  if (website) return !audits[website];
+  return !discoveries[lead.id] && !lead.isChain;
+}
+
+const withAdded = (set: Set<string>, key: string) => new Set(set).add(key);
+const withRemoved = (set: Set<string>, key: string) => {
+  const next = new Set(set);
+  next.delete(key);
+  return next;
+};
+
 export default function LeadFinder() {
-  const [config, setConfig] = useState({ google: false, pagespeedKey: false });
   const [center, setCenter] = useState<GeocodeResult | null>(null);
   const [settings, setSettings] = useState<SearchSettings>(DEFAULT_SETTINGS);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -56,15 +78,17 @@ export default function LeadFinder() {
   const [error, setError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchedOnce, setSearchedOnce] = useState(false);
+  const [discoveries, setDiscoveries] = useState<Record<string, DiscoveryResult>>({});
   const [audits, setAudits] = useState<Record<string, AuditResult>>({});
+  const [discovering, setDiscovering] = useState<Set<string>>(new Set());
   const [auditing, setAuditing] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [groupFilter, setGroupFilter] = useState<CategoryGroupId | "all">("all");
   const [text, setText] = useState("");
-  const [sort, setSort] = useState<SortKey>("opportunity");
-  const auditRun = useRef(0);
+  const [sort, setSort] = useState<SortKey>("potential");
+  const runToken = useRef(0);
   const hydrated = useRef(false);
 
   // Restore the last session (client only, after mount, to avoid hydration mismatches).
@@ -79,33 +103,32 @@ export default function LeadFinder() {
         setSearchedOnce(true);
       }
       if (saved.warnings) setWarnings(saved.warnings);
+      if (saved.discoveries) setDiscoveries(saved.discoveries);
       if (saved.audits) setAudits(saved.audits);
     }
     /* eslint-enable react-hooks/set-state-in-effect */
     hydrated.current = true;
-    fetch("/api/config")
-      .then((r) => r.json())
-      .then(setConfig)
-      .catch(() => {});
   }, []);
 
   useEffect(() => {
     if (!hydrated.current) return;
     const id = setTimeout(() => {
       try {
-        const urls = new Set(leads.map((l) => l.website));
-        const kept = Object.fromEntries(Object.entries(audits).filter(([url]) => urls.has(url)));
-        const data: Saved = { center, settings, leads, warnings, audits: kept };
+        const ids = new Set(leads.map((l) => l.id));
+        const keptDiscoveries = Object.fromEntries(Object.entries(discoveries).filter(([id]) => ids.has(id)));
+        const urls = new Set(leads.map((l) => effectiveWebsite(l, discoveries[l.id])));
+        const keptAudits = Object.fromEntries(Object.entries(audits).filter(([url]) => urls.has(url)));
+        const data: Saved = { center, settings, leads, warnings, discoveries: keptDiscoveries, audits: keptAudits };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       } catch {
         /* quota exceeded or storage disabled: persistence is best-effort */
       }
     }, 500);
     return () => clearTimeout(id);
-  }, [center, settings, leads, warnings, audits]);
+  }, [center, settings, leads, warnings, discoveries, audits]);
 
-  const auditOne = useCallback(async (url: string, force = false) => {
-    setAuditing((s) => new Set(s).add(url));
+  const auditOne = useCallback(async (url: string, force = false): Promise<void> => {
+    setAuditing((s) => withAdded(s, url));
     try {
       const res = await fetch("/api/audit", {
         method: "POST",
@@ -115,46 +138,82 @@ export default function LeadFinder() {
       const data = await res.json();
       if (res.ok) setAudits((a) => ({ ...a, [url]: data as AuditResult }));
     } catch {
-      /* network hiccup: the lead simply stays "pending" and can be re-audited */
+      /* network hiccup: the lead simply stays "pending" and can be re-analysed */
     } finally {
-      setAuditing((s) => {
-        const next = new Set(s);
-        next.delete(url);
-        return next;
-      });
+      setAuditing((s) => withRemoved(s, url));
     }
   }, []);
 
-  /** Audits a batch of websites with a small worker pool. Starting a new batch cancels the previous one. */
-  const runAudits = useCallback(
-    async (urls: string[]) => {
-      const token = ++auditRun.current;
-      const queue = Array.from(new Set(urls));
+  const discoverOne = useCallback(async (lead: Lead): Promise<DiscoveryResult | null> => {
+    setDiscovering((s) => withAdded(s, lead.id));
+    try {
+      const res = await fetch("/api/discover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: lead.name,
+          city: lead.city,
+          postcode: lead.postcode,
+          address: lead.address,
+          phone: lead.phone,
+          email: lead.email,
+          lat: lead.lat,
+          lon: lead.lon,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) return null;
+      setDiscoveries((d) => ({ ...d, [lead.id]: data as DiscoveryResult }));
+      return data as DiscoveryResult;
+    } catch {
+      return null;
+    } finally {
+      setDiscovering((s) => withRemoved(s, lead.id));
+    }
+  }, []);
+
+  /**
+   * For each lead: find its website when OpenStreetMap doesn't know it, then audit the website.
+   * Runs with a small worker pool; starting a new run cancels the previous one.
+   */
+  const runPipeline = useCallback(
+    async (targets: Lead[], knownDiscoveries: Record<string, DiscoveryResult>, knownAudits: Record<string, AuditResult>) => {
+      const token = ++runToken.current;
+      const queue = targets.filter((l) => needsWork(l, knownDiscoveries, knownAudits));
       const total = queue.length;
       if (!total) return;
+      const auditedUrls = new Set(Object.keys(knownAudits));
       let done = 0;
       setProgress({ done, total });
       const worker = async () => {
-        while (queue.length && auditRun.current === token) {
-          await auditOne(queue.shift()!);
+        while (queue.length && runToken.current === token) {
+          const lead = queue.shift()!;
+          let website = effectiveWebsite(lead, knownDiscoveries[lead.id]);
+          if (!website && !knownDiscoveries[lead.id] && !lead.isChain) {
+            website = (await discoverOne(lead))?.website;
+          }
+          if (website && !auditedUrls.has(website) && runToken.current === token) {
+            auditedUrls.add(website);
+            await auditOne(website);
+          }
           done++;
-          if (auditRun.current === token) setProgress({ done, total });
+          if (runToken.current === token) setProgress({ done, total });
         }
       };
-      await Promise.all(Array.from({ length: AUDIT_CONCURRENCY }, worker));
-      if (auditRun.current === token) setProgress(null);
+      await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+      if (runToken.current === token) setProgress(null);
     },
-    [auditOne],
+    [auditOne, discoverOne],
   );
 
-  const stopAudits = () => {
-    auditRun.current++;
+  const stopPipeline = () => {
+    runToken.current++;
     setProgress(null);
   };
 
   async function search() {
     if (!center) return;
-    stopAudits();
+    stopPipeline();
     setSearching(true);
     setError(null);
     setSelectedId(null);
@@ -167,7 +226,6 @@ export default function LeadFinder() {
           lon: center.lon,
           radius: settings.radius,
           groups: settings.groups,
-          source: settings.source,
           excludeChains: settings.excludeChains,
           locality: center.locality,
         }),
@@ -180,9 +238,7 @@ export default function LeadFinder() {
       setSearchedOnce(true);
       setStatusFilter("all");
       setGroupFilter("all");
-      if (settings.autoAudit) {
-        void runAudits(result.leads.flatMap((l) => (l.website && !audits[l.website] ? [l.website] : [])));
-      }
+      if (settings.autoAudit) void runPipeline(result.leads, discoveries, audits);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -198,14 +254,9 @@ export default function LeadFinder() {
     if (found) setCenter({ ...found, lat: p.lat, lon: p.lon });
   }
 
-  const rows: LeadRow[] = useMemo(
-    () =>
-      leads.map((lead) => {
-        const audit = lead.website ? audits[lead.website] : undefined;
-        const status = websiteStatus(lead, audit, lead.website ? auditing.has(lead.website) : false);
-        return { lead, status, audit, opportunity: opportunity(status) };
-      }),
-    [leads, audits, auditing],
+  const rows: LeadView[] = useMemo(
+    () => leads.map((lead) => buildLeadView(lead, discoveries, audits, discovering, auditing)),
+    [leads, discoveries, audits, discovering, auditing],
   );
 
   const counts = useMemo(() => {
@@ -214,21 +265,22 @@ export default function LeadFinder() {
       c[r.status] = (c[r.status] ?? 0) + 1;
       if (r.opportunity === "hot") c.hot++;
     }
-    c.pending = (c.pending ?? 0) + (c.auditing ?? 0);
+    c.pending = (c.pending ?? 0) + (c.auditing ?? 0) + (c.searching ?? 0);
     return c;
   }, [rows]);
 
   const visible = useMemo(() => {
     const q = text.trim().toLowerCase();
+    const isPending = (s: WebsiteStatus) => s === "pending" || s === "auditing" || s === "searching";
     const filtered = rows.filter((r) => {
       if (statusFilter === "hot" && r.opportunity !== "hot") return false;
-      if (statusFilter === "pending" && r.status !== "pending" && r.status !== "auditing") return false;
+      if (statusFilter === "pending" && !isPending(r.status)) return false;
       if (statusFilter !== "all" && statusFilter !== "hot" && statusFilter !== "pending" && r.status !== statusFilter) return false;
       if (groupFilter !== "all" && r.lead.group !== groupFilter) return false;
       if (q && !`${r.lead.name} ${r.lead.category} ${r.lead.address ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
     });
-    const score = (r: LeadRow) => (r.audit?.reachable && r.audit.checks.length ? r.audit.score : r.lead.website ? 50 : -1);
+    const score = (r: LeadView) => (r.audit?.reachable && r.audit.checks.length ? r.audit.score : r.website ? 50 : -1);
     return filtered.sort((a, b) => {
       switch (sort) {
         case "distance":
@@ -238,23 +290,19 @@ export default function LeadFinder() {
         case "score":
           return score(a) - score(b);
         default:
-          return (
-            OPPORTUNITY_META[a.opportunity].rank - OPPORTUNITY_META[b.opportunity].rank ||
-            score(a) - score(b) ||
-            a.lead.distance - b.lead.distance
-          );
+          return (b.potential ?? -1) - (a.potential ?? -1) || a.lead.distance - b.lead.distance;
       }
     });
   }, [rows, statusFilter, groupFilter, text, sort]);
 
   const mapItems = useMemo(() => visible.map(({ lead, status }) => ({ lead, status })), [visible]);
   const selectedRow = rows.find((r) => r.lead.id === selectedId) ?? null;
-  const pendingUrls = leads.flatMap((l) => (l.website && !audits[l.website] && !auditing.has(l.website) ? [l.website] : []));
+  const todo = leads.filter((l) => needsWork(l, discoveries, audits)).length;
 
   const exportCsv = () => {
     const date = new Date().toISOString().slice(0, 10);
     const place = (center?.locality || "portugal").toLowerCase().replace(/[^a-z0-9]+/gi, "-");
-    downloadText(`leads-${place}-${date}.csv`, leadsToCsv(visible.map((r) => r.lead), audits));
+    downloadText(`leads-${place}-${date}.csv`, leadsToCsv(visible));
   };
 
   const filterChips: { key: StatusFilter; label: string }[] = [
@@ -288,7 +336,6 @@ export default function LeadFinder() {
             onCenter={setCenter}
             settings={settings}
             onSettings={setSettings}
-            googleEnabled={config.google}
             searching={searching}
             onSearch={search}
           />
@@ -373,7 +420,7 @@ export default function LeadFinder() {
               onChange={(e) => setSort(e.target.value as SortKey)}
               className="rounded-md border border-slate-300 bg-white py-1 pl-2 pr-6 text-sm"
             >
-              <option value="opportunity">Tri : opportunité</option>
+              <option value="potential">Tri : potentiel</option>
               <option value="score">Tri : score du site</option>
               <option value="distance">Tri : distance</option>
               <option value="name">Tri : nom</option>
@@ -384,27 +431,27 @@ export default function LeadFinder() {
                 <>
                   <span className="flex items-center gap-1.5 text-xs text-slate-600">
                     <Loader2 className="size-3.5 animate-spin" />
-                    Analyse des sites {progress.done}/{progress.total}
+                    Analyse {progress.done}/{progress.total}
                   </span>
                   <div className="hidden h-1.5 w-24 overflow-hidden rounded-full bg-slate-200 sm:block">
                     <div className="h-full bg-indigo-500 transition-all" style={{ width: `${(progress.done / progress.total) * 100}%` }} />
                   </div>
                   <button
                     type="button"
-                    onClick={stopAudits}
+                    onClick={stopPipeline}
                     className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium hover:bg-slate-50"
                   >
                     <Square className="size-3" /> Stop
                   </button>
                 </>
               ) : (
-                pendingUrls.length > 0 && (
+                todo > 0 && (
                   <button
                     type="button"
-                    onClick={() => runAudits(pendingUrls)}
+                    onClick={() => runPipeline(leads, discoveries, audits)}
                     className="inline-flex items-center gap-1 rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700"
                   >
-                    <Play className="size-3" /> Analyser {pendingUrls.length} site{pendingUrls.length > 1 ? "s" : ""}
+                    <Play className="size-3" /> Analyser {todo} commerce{todo > 1 ? "s" : ""}
                   </button>
                 )
               )}
@@ -450,8 +497,9 @@ export default function LeadFinder() {
                 ) : (
                   <>
                     <p className="mb-2 text-base font-semibold text-slate-800">Trouvez vos prochains clients</p>
-                    Choisissez un lieu au Portugal et un rayon : l&apos;outil liste les commerces, indique ceux qui n&apos;ont pas de
-                    site web et analyse les autres pour repérer les sites à refaire ou à améliorer.
+                    Choisissez un lieu au Portugal et un rayon : l&apos;outil liste les commerces (OpenStreetMap), cherche
+                    lui-même les sites web manquants, puis analyse chaque site pour repérer ceux à refaire ou à améliorer. 100 %
+                    gratuit, sans clé d&apos;API.
                   </>
                 )}
               </div>

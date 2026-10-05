@@ -4,12 +4,11 @@ import { Crosshair, Loader2, MapPin, Search } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { CATEGORY_GROUPS } from "@/lib/categories";
 import { formatDistance } from "@/lib/geo";
-import type { CategoryGroupId, GeocodeResult, Source } from "@/lib/types";
+import type { CategoryGroupId, GeocodeResult } from "@/lib/types";
 
 export interface SearchSettings {
   radius: number;
   groups: CategoryGroupId[];
-  source: Source;
   excludeChains: boolean;
   autoAudit: boolean;
 }
@@ -19,14 +18,13 @@ interface Props {
   onCenter: (c: GeocodeResult) => void;
   settings: SearchSettings;
   onSettings: (s: SearchSettings) => void;
-  googleEnabled: boolean;
   searching: boolean;
   onSearch: () => void;
 }
 
 const RADIUS_STEPS = [100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000];
 
-export function SearchPanel({ center, onCenter, settings, onSettings, googleEnabled, searching, onSearch }: Props) {
+export function SearchPanel({ center, onCenter, settings, onSettings, searching, onSearch }: Props) {
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<GeocodeResult[]>([]);
   const [geocoding, setGeocoding] = useState(false);
@@ -196,29 +194,7 @@ export function SearchPanel({ center, onCenter, settings, onSettings, googleEnab
       </section>
 
       <section className="space-y-2">
-        <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Source des données</label>
-        <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-slate-100 p-1 text-xs font-medium">
-          {(
-            [
-              ["osm", "OpenStreetMap", "gratuit"],
-              ["google", "Google Places", googleEnabled ? "clé configurée" : "clé requise"],
-            ] as const
-          ).map(([value, label, hint]) => (
-            <button
-              key={value}
-              type="button"
-              disabled={value === "google" && !googleEnabled}
-              onClick={() => set("source", value)}
-              title={value === "google" && !googleEnabled ? "Ajoutez GOOGLE_PLACES_API_KEY dans .env.local" : undefined}
-              className={`rounded-md px-2 py-1.5 text-center disabled:cursor-not-allowed disabled:opacity-50 ${
-                settings.source === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
-              }`}
-            >
-              {label}
-              <span className="block text-[10px] font-normal text-slate-400">{hint}</span>
-            </button>
-          ))}
-        </div>
+        <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Options</label>
         <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
           <input
             type="checkbox"
@@ -235,7 +211,10 @@ export function SearchPanel({ center, onCenter, settings, onSettings, googleEnab
             onChange={(e) => set("autoAudit", e.target.checked)}
             className="size-4 accent-indigo-600"
           />
-          Analyser les sites automatiquement
+          <span>
+            Analyse automatique
+            <span className="block text-xs text-slate-400">trouve les sites manquants puis audite chaque site</span>
+          </span>
         </label>
       </section>
 

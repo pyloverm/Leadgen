@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { analyzeHtml } from "../audit/analyze";
+import { hasFixedLayout } from "../audit/assets";
+import { historyFromCdx } from "../audit/wayback";
 
 const NOW = new Date("2026-10-05T12:00:00Z");
 
@@ -110,5 +112,91 @@ describe("analyzeHtml", () => {
   it("flags free sub-domains", () => {
     const r = analyzeHtml({ ...base, finalUrl: "https://casasilva.wixsite.com/site", html: MODERN });
     expect(r.checks.find((c) => c.id === "domain")?.ok).toBe(false);
+  });
+});
+
+describe("deep checks", () => {
+  const assets = {
+    stylesheets: 1,
+    cssFetched: 1,
+    cssComplete: true,
+    mediaQueries: true,
+    fixedLayout: true,
+    images: 4,
+    imagesChecked: 4,
+    imageBytes: 400_000,
+    modernImages: true,
+  };
+
+  it("fails mobile for a fixed-width layout without responsive rules despite the viewport", () => {
+    const r = analyzeHtml({ ...base, html: MODERN, assets: { ...assets, mediaQueries: false } });
+    expect(r.checks.find((c) => c.id === "mobile")).toMatchObject({ ok: false, penalty: 22 });
+    expect(r.checks.find((c) => c.id === "mobile")?.detail).toMatch(/largeur fixe/);
+  });
+
+  it("accepts fluid layouts without media queries", () => {
+    const r = analyzeHtml({ ...base, html: MODERN, assets: { ...assets, mediaQueries: false, fixedLayout: false } });
+    expect(r.checks.find((c) => c.id === "mobile")?.ok).toBe(true);
+  });
+
+  it("detects fixed layouts", () => {
+    expect(hasFixedLayout("#wrap{width:960px;margin:auto}", "")).toBe(true);
+    expect(hasFixedLayout("body{max-width:26em} img{width:100px}", "")).toBe(false);
+    expect(hasFixedLayout("", '<table width="800"><tr><td>x</td></tr></table>')).toBe(true);
+    expect(hasFixedLayout("", '<table width="100%">')).toBe(false);
+  });
+
+  it("does not conclude anything when a stylesheet could not be read", () => {
+    const r = analyzeHtml({ ...base, html: MODERN, assets: { ...assets, mediaQueries: false, cssComplete: false } });
+    expect(r.checks.find((c) => c.id === "mobile")?.ok).toBe(true);
+  });
+
+  it("flags heavy images", () => {
+    const r = analyzeHtml({
+      ...base,
+      html: MODERN,
+      assets: { ...assets, imageBytes: 5_200_000, heaviestImage: { url: "https://example.pt/hero.jpg", bytes: 2_500_000 } },
+    });
+    expect(r.checks.find((c) => c.id === "images_weight")).toMatchObject({ ok: false, penalty: 8 });
+  });
+
+  it("uses the Wayback history to spot abandoned sites", () => {
+    const stale = analyzeHtml({
+      ...base,
+      html: MODERN,
+      history: { firstSeen: "2009-03", lastCapture: "2026-07", unchangedSince: "2016-02", captures: 120 },
+    });
+    expect(stale.checks.find((c) => c.id === "history")).toMatchObject({ ok: false });
+    expect(stale.history?.firstSeen).toBe("2009-03");
+
+    const fresh = analyzeHtml({
+      ...base,
+      html: MODERN,
+      history: { firstSeen: "2009-03", lastCapture: "2026-07", unchangedSince: "2026-05", captures: 120 },
+    });
+    expect(fresh.checks.find((c) => c.id === "history")?.ok).toBe(true);
+
+    // Not archived recently: no conclusion.
+    const old = analyzeHtml({
+      ...base,
+      html: MODERN,
+      history: { firstSeen: "2009-03", lastCapture: "2019-07", unchangedSince: "2012-01", captures: 30 },
+    });
+    expect(old.checks.find((c) => c.id === "history")).toBeUndefined();
+  });
+});
+
+describe("historyFromCdx", () => {
+  it("finds when the homepage last changed", () => {
+    const rows = [
+      ["timestamp", "digest"],
+      ["20090301000000", "A"],
+      ["20120101000000", "B"],
+      ["20160201000000", "C"],
+      ["20200101000000", "C"],
+      ["20260701000000", "C"],
+    ];
+    expect(historyFromCdx(rows)).toEqual({ firstSeen: "2009-03", lastCapture: "2026-07", unchangedSince: "2016-02", captures: 5 });
+    expect(historyFromCdx([])).toBeNull();
   });
 });

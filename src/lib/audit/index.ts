@@ -2,7 +2,14 @@ import { TtlCache } from "../cache";
 import type { AuditResult } from "../types";
 import { isNotARealWebsite, normalizeUrl } from "../urls";
 import { analyzeHtml } from "./analyze";
+import { inspectAssets } from "./assets";
 import { FetchError, safeFetch, type FetchedPage } from "./safe-fetch";
+import { siteHistory } from "./wayback";
+
+/** Resolves to `fallback` if the promise takes too long or fails: extras must never block an audit. */
+function within<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([promise.catch(() => fallback), new Promise<T>((r) => setTimeout(() => r(fallback), ms))]);
+}
 
 const cache = new TtlCache<AuditResult>(6 * 60 * 60 * 1000, 3000);
 
@@ -96,6 +103,10 @@ export async function auditWebsite(rawUrl: string, { force = false } = {}): Prom
           reasons: [page.status === 404 ? "Page d'accueil introuvable (erreur 404)" : `Site en erreur (HTTP ${page.status})`],
         });
       } else {
+        const [assets, history] = await Promise.all([
+          within(inspectAssets(page.body, page.finalUrl), 12_000, undefined),
+          within(siteHistory(page.finalUrl), 10_000, null),
+        ]);
         result = {
           url,
           auditedAt: new Date().toISOString(),
@@ -107,6 +118,8 @@ export async function auditWebsite(rawUrl: string, { force = false } = {}): Prom
             timeMs: page.timeMs,
             bytes: page.bytes,
             tlsError,
+            assets,
+            history,
           }),
         };
       }

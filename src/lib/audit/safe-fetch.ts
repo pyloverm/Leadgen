@@ -90,7 +90,10 @@ function detectCharset(headers: Headers, head: Uint8Array): string {
 }
 
 async function readBody(res: Response, maxBytes: number): Promise<{ buf: Uint8Array; bytes: number; truncated: boolean }> {
-  if (!res.body) return { buf: new Uint8Array(), bytes: 0, truncated: false };
+  if (!res.body || maxBytes <= 0) {
+    await res.body?.cancel().catch(() => {});
+    return { buf: new Uint8Array(), bytes: 0, truncated: false };
+  }
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let bytes = 0;
@@ -119,7 +122,7 @@ async function readBody(res: Response, maxBytes: number): Promise<{ buf: Uint8Ar
 /** Fetches a public web page, following redirects manually so each hop is validated. */
 export async function safeFetch(
   rawUrl: string,
-  { timeoutMs = 15_000, maxBytes = 3_000_000, maxRedirects = 6 } = {},
+  { timeoutMs = 15_000, maxBytes = 3_000_000, maxRedirects = 6, method = "GET" as "GET" | "HEAD" } = {},
 ): Promise<FetchedPage> {
   let url = new URL(rawUrl);
   const redirects: string[] = [];
@@ -130,6 +133,7 @@ export async function safeFetch(
     for (let hop = 0; ; hop++) {
       await assertPublicUrl(url);
       const res = await fetch(url, {
+        method,
         redirect: "manual",
         signal,
         cache: "no-store",

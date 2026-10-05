@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import type { AuditCheck, AuditResult, AuditVerdict, CheckSeverity } from "../types";
+import type { AssetStats, AuditCheck, AuditResult, AuditVerdict, CheckSeverity, SiteHistory } from "../types";
 
 export interface AnalyzeInput {
   url: string;
@@ -10,6 +10,10 @@ export interface AnalyzeInput {
   bytes: number;
   /** Set when HTTPS failed because of a certificate problem and we fell back to HTTP. */
   tlsError?: string;
+  /** Stylesheets / images inspection (optional, needs extra requests). */
+  assets?: AssetStats;
+  /** Wayback Machine history of the homepage (optional). */
+  history?: SiteHistory | null;
   now?: Date;
 }
 
@@ -46,6 +50,17 @@ const PARKED_PATTERNS: [RegExp, string][] = [
   [/account (has been )?suspended|conta suspensa|website (has )?expired|this site is (currently )?unavailable|hosting (has )?expired/i, "Hébergement suspendu ou expiré"],
   [/apache2? (ubuntu |debian )?default page|welcome to nginx!|it works!<\/h1>|index of \/<\/title>|default web site page|plesk (obsidian|onyx)? ?default|cpanel default|hostinger default/i, "Page par défaut du serveur (site vide)"],
 ];
+
+/** Returns why a page is a parked / empty / "coming soon" page, or null. */
+export function detectParked(title: string, text: string, html: string): string | null {
+  const sample = `${title} ${text.slice(0, 5000)} ${html.slice(0, 3000)}`;
+  return PARKED_PATTERNS.find(([re]) => re.test(sample))?.[1] ?? null;
+}
+
+/** Site builders whose themes are responsive even when we cannot see their CSS. */
+const RESPONSIVE_BUILDERS = ["Wix", "Squarespace", "Shopify", "Webflow", "Jimdo", "GoDaddy Builder", "Site123", "Weebly", "Webnode"];
+
+const mb = (bytes: number) => `${(bytes / 1e6).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Mo`;
 
 const GENERIC_TITLES = /^(home|homepage|in[ií]cio|p[aá]gina inicial|accueil|untitled|sem t[ií]tulo|welcome|bem[- ]vindo|index|default|my site|meu site|site)$/i;
 
@@ -196,7 +211,7 @@ export function analyzeHtml(input: AnalyzeInput): Omit<AuditResult, "url" | "aud
   $("script, style, noscript, template, svg").remove();
   const text = $("body").text().replace(/\s+/g, " ").trim();
   const copyright = findCopyrightYear(text, html, now);
-  const parked = PARKED_PATTERNS.find(([re]) => re.test(`${title ?? ""} ${text.slice(0, 5000)} ${html.slice(0, 3000)}`));
+  const parked = detectParked(title ?? "", text, html);
   const freeSub = FREE_SUBDOMAINS.find((d) => host === d || host.endsWith(`.${d}`));
   const cmsOld = oldCmsVersion(tech);
   const libOld = oldLibrary(tech, html);
@@ -205,7 +220,7 @@ export function analyzeHtml(input: AnalyzeInput): Omit<AuditResult, "url" | "aud
   const add = (id: string, label: string, ok: boolean, severity: CheckSeverity, penalty: number, detail?: string) =>
     checks.push({ id, label, ok, severity, penalty: ok ? 0 : penalty, detail: ok ? undefined : detail });
 
-  add("online", "Site en ligne et actif", !parked, "critical", 60, parked?.[1]);
+  add("online", "Site en ligne et actif", !parked, "critical", 60, parked ?? undefined);
   add(
     "https",
     "Connexion sécurisée (HTTPS)",
@@ -214,13 +229,28 @@ export function analyzeHtml(input: AnalyzeInput): Omit<AuditResult, "url" | "aud
     20,
     input.tlsError ?? "Pas de HTTPS : « Non sécurisé » dans le navigateur",
   );
+  // "initial-scale=1" alone also makes browsers use the device width.
+  const hasViewport = /width\s*=\s*device-width|initial-scale\s*=\s*1(?:\.0)?(?![.\d])/i.test(viewport);
+  const assets = input.assets;
+  // A viewport tag alone is not enough: a fixed-width layout without any @media rule cannot adapt to phones.
+  const noResponsiveCss =
+    hasViewport &&
+    assets !== undefined &&
+    assets.cssComplete &&
+    !assets.mediaQueries &&
+    assets.fixedLayout &&
+    !tech.some((t) => RESPONSIVE_BUILDERS.includes(t));
   add(
     "mobile",
     "Adapté au mobile",
-    /width\s*=\s*device-width/i.test(viewport),
+    hasViewport && !noResponsiveCss,
     "critical",
-    30,
-    viewport ? `Viewport non responsive (${viewport.slice(0, 40)})` : "Pas de balise viewport : site non adapté au mobile",
+    noResponsiveCss ? 22 : 30,
+    noResponsiveCss
+      ? "Mise en page à largeur fixe sans règle responsive : illisible sur téléphone"
+      : viewport
+        ? `Viewport non responsive (${viewport.slice(0, 40)})`
+        : "Pas de balise viewport : site non adapté au mobile",
   );
   add(
     "obsolete_tech",
@@ -249,6 +279,39 @@ export function analyzeHtml(input: AnalyzeInput): Omit<AuditResult, "url" | "aud
   if (input.timeMs > 3000) add("speed", "Temps de réponse du serveur", false, "major", 10, `Serveur lent : ${(input.timeMs / 1000).toFixed(1)} s`);
   else add("speed", "Temps de réponse du serveur", input.timeMs <= 1500, "minor", 4, `Serveur un peu lent : ${(input.timeMs / 1000).toFixed(1)} s`);
   add("weight", "Poids de la page", input.bytes <= 2_000_000, "minor", 4, `Page très lourde (${(input.bytes / 1e6).toFixed(1)} Mo de HTML)`);
+  if (assets && assets.imagesChecked > 0) {
+    const heavy = (assets.heaviestImage?.bytes ?? 0) > 1_000_000 || assets.imageBytes > 3_000_000;
+    add(
+      "images_weight",
+      "Images optimisées",
+      !heavy,
+      "major",
+      8,
+      assets.imagesChecked > 1
+        ? `Images trop lourdes : ${mb(assets.imageBytes)} pour ${assets.imagesChecked} images (la plus lourde ${mb(assets.heaviestImage?.bytes ?? 0)})`
+        : `Image trop lourde : ${mb(assets.imageBytes)}`,
+    );
+  }
+  if (assets && assets.images >= 3) {
+    add("images_format", "Formats d'image modernes", assets.modernImages, "minor", 2, "Pas de WebP/AVIF : images plus lentes à charger");
+  }
+  const history = input.history;
+  if (history) {
+    const unchangedYear = Number(history.unchangedSince.slice(0, 4));
+    const lastCaptureAge = now.getFullYear() * 12 + now.getMonth() - (Number(history.lastCapture.slice(0, 4)) * 12 + Number(history.lastCapture.slice(5, 7)) - 1);
+    // Only meaningful when the archive saw the site recently.
+    if (lastCaptureAge <= 18) {
+      const years = now.getFullYear() - unchangedYear;
+      add(
+        "history",
+        "Site mis à jour",
+        years < 3,
+        "major",
+        12,
+        `Page d'accueil strictement identique depuis ${unchangedYear} (archives du web)`,
+      );
+    }
+  }
 
   if (text.length < 250) {
     const spa = scripts >= 5;
@@ -289,6 +352,7 @@ export function analyzeHtml(input: AnalyzeInput): Omit<AuditResult, "url" | "aud
     failed("obsolete_tech") ||
     failed("legacy_html") ||
     failed("table_layout") ||
+    failed("history") ||
     checks.some((c) => c.id === "freshness" && !c.ok && c.severity === "major");
 
   let verdict: AuditVerdict;
@@ -318,5 +382,7 @@ export function analyzeHtml(input: AnalyzeInput): Omit<AuditResult, "url" | "aud
     emails: extractEmails($, text),
     phones: extractPhones($, text),
     socials: extractSocials($),
+    assets,
+    history: history ?? undefined,
   };
 }

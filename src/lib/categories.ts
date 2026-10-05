@@ -6,10 +6,6 @@ export interface CategoryGroup {
   emoji: string;
   /** Overpass QL tag filters; each one becomes a `nwr(around…)` clause. */
   osm: string[];
-  /** Google Places (New) "Table A" types. */
-  google: string[];
-  /** Small, safe subset used if Google rejects one of the types above. */
-  googleCore: string[];
 }
 
 const FOOD_AMENITIES = [
@@ -70,55 +66,18 @@ export const CATEGORY_GROUPS: CategoryGroup[] = [
     label: "Restauration",
     emoji: "🍽️",
     osm: [`["amenity"~"${re(FOOD_AMENITIES)}"]`, `["shop"~"^(bakery|pastry|confectionery)$"]`],
-    google: [
-      "restaurant",
-      "cafe",
-      "bar",
-      "bakery",
-      "meal_takeaway",
-      "ice_cream_shop",
-      "coffee_shop",
-      "pub",
-      "wine_bar",
-      "fast_food_restaurant",
-    ],
-    googleCore: ["restaurant", "cafe", "bar", "bakery", "meal_takeaway"],
   },
   {
     id: "shops",
     label: "Commerces",
     emoji: "🛍️",
     osm: [`["shop"]`],
-    google: [
-      "store",
-      "clothing_store",
-      "shoe_store",
-      "jewelry_store",
-      "furniture_store",
-      "home_goods_store",
-      "hardware_store",
-      "electronics_store",
-      "book_store",
-      "florist",
-      "pet_store",
-      "bicycle_store",
-      "convenience_store",
-      "supermarket",
-      "liquor_store",
-      "cell_phone_store",
-      "sporting_goods_store",
-      "gift_shop",
-      "grocery_store",
-    ],
-    googleCore: ["store", "clothing_store", "furniture_store", "hardware_store", "florist", "supermarket"],
   },
   {
     id: "lodging",
     label: "Hébergement",
     emoji: "🏨",
     osm: [`["tourism"~"${re(LODGING_TOURISM)}"]`],
-    google: ["lodging", "hotel", "guest_house", "hostel", "bed_and_breakfast", "motel", "campground"],
-    googleCore: ["lodging", "campground"],
   },
   {
     id: "health_beauty",
@@ -130,24 +89,6 @@ export const CATEGORY_GROUPS: CategoryGroup[] = [
       `["healthcare"]`,
       `["leisure"="fitness_centre"]`,
     ],
-    google: [
-      "beauty_salon",
-      "hair_care",
-      "hair_salon",
-      "nail_salon",
-      "barber_shop",
-      "spa",
-      "gym",
-      "fitness_center",
-      "yoga_studio",
-      "dentist",
-      "dental_clinic",
-      "doctor",
-      "physiotherapist",
-      "pharmacy",
-      "veterinary_care",
-    ],
-    googleCore: ["beauty_salon", "hair_care", "spa", "gym", "dentist", "doctor", "physiotherapist", "pharmacy", "veterinary_care"],
   },
   {
     id: "services",
@@ -159,49 +100,18 @@ export const CATEGORY_GROUPS: CategoryGroup[] = [
       `["amenity"~"${re(SERVICE_AMENITIES)}"]`,
       `["shop"~"${re(SERVICE_SHOPS)}"]`,
     ],
-    google: [
-      "lawyer",
-      "accounting",
-      "real_estate_agency",
-      "insurance_agency",
-      "travel_agency",
-      "electrician",
-      "plumber",
-      "painter",
-      "roofing_contractor",
-      "locksmith",
-      "moving_company",
-      "laundry",
-      "general_contractor",
-    ],
-    googleCore: [
-      "lawyer",
-      "accounting",
-      "real_estate_agency",
-      "insurance_agency",
-      "travel_agency",
-      "electrician",
-      "plumber",
-      "painter",
-      "locksmith",
-      "laundry",
-    ],
   },
   {
     id: "auto",
     label: "Auto & moto",
     emoji: "🚗",
     osm: [`["shop"~"${re(AUTO_SHOPS)}"]`, `["amenity"~"${re(AUTO_AMENITIES)}"]`],
-    google: ["car_repair", "car_dealer", "car_wash", "car_rental", "gas_station"],
-    googleCore: ["car_repair", "car_dealer", "car_wash", "car_rental", "gas_station"],
   },
   {
     id: "leisure",
     label: "Loisirs & sorties",
     emoji: "🎳",
     osm: [`["leisure"~"${re(LEISURE_VALUES)}"]`, `["amenity"~"${re(LEISURE_AMENITIES)}"]`],
-    google: ["night_club", "bowling_alley", "art_gallery", "amusement_center", "golf_course", "movie_theater"],
-    googleCore: ["night_club", "bowling_alley", "art_gallery", "movie_theater"],
   },
 ];
 
@@ -393,15 +303,4 @@ export function classifyOsm(tags: Tags): { group: CategoryGroupId; value: string
   if (craft) return { group: "services", value: craft === "yes" ? "handicraft" : craft };
   if (shop) return { group: "shops", value: shop === "yes" ? "boutique" : shop };
   return null;
-}
-
-/** Map a Google primary type to one of our groups (used when a place matches several requests). */
-export function classifyGoogleType(type: string | undefined, fallback: CategoryGroupId): CategoryGroupId {
-  if (!type) return fallback;
-  for (const group of CATEGORY_GROUPS) {
-    if (group.google.includes(type)) return group.id;
-  }
-  if (type.endsWith("_restaurant")) return "food";
-  if (type.endsWith("_store") || type.endsWith("_shop")) return "shops";
-  return fallback;
 }

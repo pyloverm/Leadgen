@@ -8,7 +8,7 @@ export function StatusBadge({ status, long = false }: { status: WebsiteStatus; l
     <span
       className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${meta.badge}`}
     >
-      {status === "auditing" ? (
+      {status === "auditing" || status === "searching" ? (
         <Loader2 className="size-3 animate-spin" />
       ) : (
         <span className="size-1.5 rounded-full" style={{ background: meta.color }} />
@@ -18,13 +18,14 @@ export function StatusBadge({ status, long = false }: { status: WebsiteStatus; l
   );
 }
 
-export function OpportunityTag({ value }: { value: Opportunity }) {
+export function OpportunityTag({ value, potential }: { value: Opportunity; potential: number | null }) {
   const meta = OPPORTUNITY_META[value];
-  const flames = value === "hot" ? "🔥" : value === "warm" ? "♨️" : value === "cold" ? "❄️" : "…";
+  const icon = value === "hot" ? "🔥" : value === "warm" ? "♨️" : value === "cold" ? "❄️" : "…";
   return (
-    <span className={`inline-flex items-center gap-1 text-xs font-semibold ${meta.className}`}>
-      <span aria-hidden>{flames}</span>
-      {meta.label}
+    <span className={`inline-flex items-center gap-1 text-xs font-semibold ${meta.className}`} title={`Potentiel ${potential ?? "?"}/100`}>
+      <span aria-hidden>{icon}</span>
+      {potential === null ? meta.label : <span className="tabular-nums">{potential}</span>}
+      {potential !== null && <span className="font-normal opacity-70">{meta.label}</span>}
     </span>
   );
 }

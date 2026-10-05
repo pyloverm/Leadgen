@@ -1,7 +1,6 @@
 import { badRequest, errorResponse } from "@/lib/api";
 import { ALL_GROUP_IDS } from "@/lib/categories";
 import { isInPortugal } from "@/lib/geo";
-import { isGoogleEnabled, searchGoogle } from "@/lib/providers/google";
 import { searchOsm } from "@/lib/providers/overpass";
 import type { CategoryGroupId, SearchParams } from "@/lib/types";
 
@@ -29,16 +28,11 @@ export async function POST(request: Request) {
     lon,
     radius,
     groups,
-    source: body.source === "google" ? "google" : "osm",
     excludeChains: Boolean(body.excludeChains),
   };
-  if (params.source === "google" && !isGoogleEnabled()) {
-    return badRequest("Source Google indisponible : ajoutez GOOGLE_PLACES_API_KEY dans .env.local");
-  }
 
   try {
-    const result = params.source === "google" ? await searchGoogle(params) : await searchOsm(params, body.locality);
-    return Response.json(result);
+    return Response.json(await searchOsm(params, body.locality));
   } catch (err) {
     return errorResponse(err);
   }

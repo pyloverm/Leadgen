@@ -4,30 +4,44 @@ Générateur de leads pour web designers / agences : choisissez **un lieu au Por
 **tous les commerces** de la zone, indique **ceux qui n'ont pas de site web** (ou seulement une page Facebook /
 Instagram) et **analyse automatiquement les sites existants** pour repérer ceux **à refaire** ou **améliorables**.
 
+**100 % gratuit, aucune clé d'API**, aucun compte à créer.
+
 ## Fonctionnalités
 
 - 🔎 **Recherche par lieu + rayon** (100 m → 10 km) : ville, quartier, adresse ou coordonnées `38.72,-9.14`,
   ou clic directement sur la carte.
 - 🏪 **7 familles de commerces** : restauration, commerces, hébergement, santé & beauté, services & artisans,
   auto & moto, loisirs. Option pour **exclure les chaînes** (Pingo Doce, McDonald's, Galp…).
+- 🕵️ **Recherche automatique des sites manquants** : OpenStreetMap ne connaît pas toujours le site d'un commerce,
+  alors l'app le cherche elle-même :
+  1. le **domaine de l'email pro** (`info@casasilva.pt` → `casasilva.pt`) ;
+  2. des **noms de domaine devinés** à partir du nom (`opescador.pt`, `restauranteopescador.com`,
+     `pescadorlagos.pt`…), testés en DNS ;
+  3. chaque domaine actif est ouvert et **comparé au commerce** (même téléphone, nom dans le titre, même ville ou
+     code postal) → confiance « élevée » ou « à confirmer ».
+  Elle repère aussi les **domaines réservés au nom du commerce mais vides** : un argument de vente en or.
 - 🌐 **Statut du site web** pour chaque commerce :
-  | Statut | Signification | Opportunité |
-  | --- | --- | --- |
-  | **Sans site** | aucun site connu | 🔥 Chaud |
-  | **Réseaux seulement** | uniquement Facebook, Instagram, TripAdvisor, ancien site Google Business… | 🔥 Chaud |
-  | **À refaire** | site hors ligne, domaine expiré, en construction, non adapté au mobile, très daté… | 🔥 Chaud |
-  | **Améliorable** | site correct mais avec des manques (SEO, HTTPS, lenteur, contact…) | ♨️ Tiède |
-  | **Correct** | site moderne | ❄️ Froid |
-  | **Non analysable** | site protégé contre les robots (Cloudflare…) : à vérifier à la main | ? |
-- 🩺 **Audit de site (score /100)** : HTTPS et certificat, adaptation mobile, technologies obsolètes (Flash, frames),
-  année du copyright, HTML ancien (`<font>`, tableaux), temps de réponse, contenu, titre / meta description / H1,
-  contact en un clic, sous-domaine gratuit (Wix, Jimdo…), CMS ou jQuery obsolètes, Open Graph, schema.org…
-  Détection des domaines **parqués / à vendre** et des pages **« em construção »**.
-- 📇 **Contacts** : téléphone, email, réseaux sociaux (depuis la fiche + extraits du site), lien WhatsApp pour les
+  | Statut | Signification |
+  | --- | --- |
+  | **Sans site** | aucun site, même après la recherche automatique |
+  | **Réseaux seulement** | uniquement Facebook, Instagram, TripAdvisor, ancien site Google Business… |
+  | **À refaire** | site hors ligne, domaine expiré, en construction, non adapté au mobile, très daté… |
+  | **Améliorable** | site correct mais avec des manques (SEO, HTTPS, lenteur, images lourdes…) |
+  | **Correct** | site moderne |
+  | **Non analysable** | site protégé contre les robots (Cloudflare…) : à vérifier à la main |
+- 🩺 **Audit de site (score /100)**, uniquement avec des requêtes HTTP classiques :
+  - HTTPS et certificat, technologies obsolètes (Flash, frames), HTML ancien (`<font>`, tableaux) ;
+  - **vrai test responsive** : balise viewport **et** lecture des feuilles CSS (règles `@media`, largeur fixe) ;
+  - **poids réel des images** (WebP/AVIF ou pas) ;
+  - **historique gratuit via l'Internet Archive** : « en ligne depuis 2009, page d'accueil identique depuis 2016 » ;
+  - année du copyright, CMS / jQuery obsolètes (WordPress 4, Drupal 7, Joomla 3…), sous-domaine gratuit
+    (Wix, Jimdo…), domaine parqué ou « em construção », titre / meta description / H1, contact en un clic…
+- 🎯 **Score de potentiel 0–100** par commerce : situation du site, joignabilité (téléphone / email),
+  valeur du secteur (hôtels, cliniques… > kiosques), chaînes pénalisées. Tri par défaut sur ce score.
+- 📇 **Contacts** : téléphone, email, réseaux sociaux (fiche OSM + extraits du site), lien WhatsApp pour les
   mobiles portugais.
-- ⚡ **Google PageSpeed (mobile)** à la demande dans la fiche d'un commerce.
 - ✉️ **Message d'approche en portugais** généré à partir des problèmes détectés (copier / envoyer par email).
-- 🗺️ **Carte** avec les commerces colorés par statut, filtres, tri par opportunité.
+- 🗺️ **Carte** colorée par statut, filtres, liens directs vers PageSpeed et la Wayback Machine.
 - 📤 **Export CSV** (séparateur `;`, s'ouvre directement dans Excel).
 - 💾 La dernière recherche est conservée dans le navigateur.
 
@@ -37,48 +51,42 @@ Prérequis : Node.js 20+.
 
 ```bash
 npm install
-cp .env.example .env.local   # optionnel
 npm run dev
 ```
 
-Puis ouvrez <http://localhost:3000>.
+Puis ouvrez <http://localhost:3000>. C'est tout : aucune clé, aucun `.env` obligatoire.
 
-## Sources de données
+## Sources (toutes gratuites)
 
-| Source | Coût | Remarques |
-| --- | --- | --- |
-| **OpenStreetMap** (Nominatim + Overpass) | Gratuit, sans clé | Très bonne couverture des commerces, mais le champ « site web » est souvent incomplet : un commerce « sans site » dans OSM peut en avoir un. Utilisez le bouton **Vérifier sur Google** de la fiche avant de démarcher. |
-| **Google Places API (New)** | Payant (quota gratuit mensuel) | Bien plus fiable pour les sites web, téléphones, notes et avis. Activez *Places API (New)* dans Google Cloud et mettez la clé dans `GOOGLE_PLACES_API_KEY`. |
-
-Avec Google, l'API renvoie 20 lieux maximum par requête : l'app découpe automatiquement les zones denses en
-sous-zones. Le nombre de requêtes par recherche est plafonné par `GOOGLE_MAX_REQUESTS` (60 par défaut) pour
-maîtriser la facture — chaque requête « Nearby Search » avec site web et téléphone est facturée au tarif *Enterprise*
-de Google, consultez leur grille tarifaire.
-
-## Variables d'environnement
-
-Voir [`.env.example`](.env.example). Toutes sont optionnelles.
-
-| Variable | Rôle |
+| Source | Utilisation |
 | --- | --- |
-| `GOOGLE_PLACES_API_KEY` | Active la source Google Places |
-| `GOOGLE_MAX_REQUESTS` | Plafond de requêtes Google par recherche (défaut 60) |
-| `PAGESPEED_API_KEY` | Clé PageSpeed Insights (sans clé, le quota partagé est souvent épuisé) |
-| `OVERPASS_URLS` | Serveurs Overpass à utiliser (séparés par des virgules) |
-| `NOMINATIM_URL` | Serveur Nominatim |
-| `LEADGEN_USER_AGENT` | User-Agent envoyé à OpenStreetMap (mettez-y votre email de contact) |
+| **OpenStreetMap** — Nominatim | Trouver le lieu au Portugal |
+| **OpenStreetMap** — Overpass | Lister les commerces du rayon (nom, catégorie, adresse, téléphone, email, site, réseaux) |
+| **DNS** | Tester les noms de domaine devinés |
+| **Les sites eux-mêmes** | Vérifier le site trouvé, l'auditer, lire ses CSS, mesurer ses images, extraire emails / téléphones |
+| **Internet Archive** (Wayback Machine) | Âge du site et date de la dernière modification de la page d'accueil |
+
+Les résultats sont mis en cache côté serveur (recherches 30 min, sites 6 h, découvertes et historiques 24 h) pour
+ménager ces services gratuits.
+
+## Variables d'environnement (optionnelles)
+
+Voir [`.env.example`](.env.example) : uniquement des réglages avancés (serveurs OpenStreetMap à utiliser,
+User-Agent).
 
 ## Comment le score est calculé
 
 Chaque site part de 100 points ; chaque problème retire des points selon sa gravité
 (critique : −20 à −30, important : −5 à −15, mineur : −2 à −4). Le verdict :
 
-- **À refaire** : score < 50, ou site non adapté au mobile **et** au design daté, ou site hors ligne / parqué / en
-  erreur / domaine introuvable / certificat invalide ;
+- **À refaire** : score < 50, ou site non adapté au mobile **et** daté (technos obsolètes, copyright ancien,
+  page inchangée depuis des années), ou site hors ligne / parqué / en erreur / domaine introuvable / certificat
+  invalide ;
 - **Améliorable** : score entre 50 et 79 ;
 - **Correct** : score ≥ 80.
 
-Le code de l'audit est dans [`src/lib/audit/analyze.ts`](src/lib/audit/analyze.ts) : facile à ajuster.
+Le code de l'audit est dans [`src/lib/audit/analyze.ts`](src/lib/audit/analyze.ts), celui de la recherche de sites
+dans [`src/lib/discovery/`](src/lib/discovery) : faciles à ajuster.
 
 ## Structure
 
@@ -87,14 +95,15 @@ src/
   app/
     page.tsx                 # interface
     api/geocode/route.ts     # lieu → coordonnées (Nominatim, limité au Portugal)
-    api/places/route.ts      # commerces dans le rayon (OSM ou Google)
+    api/places/route.ts      # commerces dans le rayon (Overpass)
+    api/discover/route.ts    # recherche du site d'un commerce (email, domaines devinés, vérification)
     api/audit/route.ts       # audit d'un site web
-    api/pagespeed/route.ts   # Google PageSpeed Insights
-  components/                # LeadFinder (état), SearchPanel, MapView (Leaflet), LeadsTable, LeadDrawer
+  components/                # LeadFinder (état + file de traitement), SearchPanel, MapView, LeadsTable, LeadDrawer
   lib/
-    providers/               # nominatim, overpass, google
-    audit/                   # safe-fetch (anti-SSRF), analyze (règles), pagespeed
-    categories.ts            # familles de commerces ↔ tags OSM / types Google
+    providers/               # nominatim, overpass
+    discovery/               # candidates (domaines possibles), verify (est-ce bien ce commerce ?)
+    audit/                   # safe-fetch (anti-SSRF), analyze (règles), assets (CSS, images), wayback
+    categories.ts            # familles de commerces ↔ tags OSM
     leads.ts, csv.ts, pitch.ts
 ```
 
@@ -111,7 +120,8 @@ npm run typecheck  # TypeScript
 
 ## Bon usage
 
-- Les serveurs publics OpenStreetMap sont gratuits mais partagés : évitez les rayons énormes en rafale
-  (les résultats sont mis en cache 30 min côté serveur).
+- OpenStreetMap et l'Internet Archive sont gratuits mais partagés : évitez les rayons énormes en rafale.
+- Un site « trouvé – à confirmer » a le bon nom mais rien ne prouve encore que c'est le même établissement
+  (ville ou téléphone absents de la page) : jetez-y un œil avant d'appeler.
 - Prospection : au Portugal comme dans toute l'UE, le RGPD s'applique aux emails nominatifs. Privilégiez les
   contacts professionnels génériques, présentez-vous clairement et proposez toujours de ne plus être recontacté.

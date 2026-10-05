@@ -62,7 +62,6 @@ export function elementToLead(el: OverpassElement, params: SearchParams, localit
 
   return {
     id: `osm:${el.type}/${el.id}`,
-    source: "osm",
     name,
     category: labelFor(cls.value),
     group: cls.group,
@@ -70,6 +69,8 @@ export function elementToLead(el: OverpassElement, params: SearchParams, localit
     lon,
     distance: Math.round(haversine(params, { lat, lon })),
     address,
+    city: tags["addr:city"] || tags["addr:place"] || locality || undefined,
+    postcode: tags["addr:postcode"],
     phone: first(tags.phone || tags["contact:phone"] || tags["contact:mobile"] || tags.mobile),
     email: first(tags.email || tags["contact:email"]),
     website,
@@ -122,10 +123,8 @@ async function runQuery(query: string): Promise<OverpassElement[]> {
 export async function searchOsm(params: SearchParams, locality?: string): Promise<SearchResponse> {
   const query = buildOverpassQuery(params);
   let elements = cache.get(query);
-  let requests = 0;
   if (!elements) {
     elements = await runQuery(query);
-    requests = 1;
     cache.set(query, elements);
   }
 
@@ -137,11 +136,8 @@ export async function searchOsm(params: SearchParams, locality?: string): Promis
   if (params.excludeChains) result = result.filter((l) => !l.isChain);
 
   const warnings: string[] = [];
-  const withSite = result.filter((l) => l.website).length;
-  if (result.length > 0 && withSite / result.length < 0.25) {
-    warnings.push(
-      "OpenStreetMap ne connaît pas toujours le site web des commerces : vérifiez les « sans site » avec le lien Google avant de démarcher, ou utilisez la source Google Places.",
-    );
+  if (elements.length === 0) {
+    warnings.push("Aucun commerce cartographié ici dans OpenStreetMap : essayez un rayon plus grand.");
   }
-  return { leads: result, warnings, requests };
+  return { leads: result, warnings };
 }

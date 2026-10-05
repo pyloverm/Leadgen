@@ -1,4 +1,5 @@
-import type { AuditResult, Lead, WebsiteStatus } from "./types";
+import type { LeadView } from "./leads";
+import type { AuditResult } from "./types";
 import { displayHost } from "./urls";
 
 /** Portuguese phrasing of each audit check, used to build a first contact message. */
@@ -17,14 +18,25 @@ const PT_ISSUES: Record<string, (audit: AuditResult) => string> = {
   contact: () => "não é fácil contactar-vos com um clique a partir do telemóvel",
   domain: () => "usa um endereço gratuito em vez de um domínio próprio",
   cms: () => "usa uma versão antiga do sistema, com falhas de segurança conhecidas",
+  history: (a) => `a página principal não é atualizada desde ${a.history?.unchangedSince.slice(0, 4)}`,
+  images_weight: () => "as imagens são muito pesadas e tornam o site lento no telemóvel",
 };
 
-export function buildPitch(lead: Lead, status: WebsiteStatus, audit?: AuditResult): string {
+export function buildPitch({ lead, status, audit, discovery, website }: LeadView): string {
   const hello = `Olá, ${lead.name}!`;
   const offer =
     "Sou web designer e crio sites profissionais, rápidos e adaptados ao telemóvel, a preços acessíveis para pequenos negócios.";
   const close = "Posso mostrar-vos uma proposta, sem compromisso? Obrigado e bom trabalho!";
 
+  const parked = discovery?.parked[0];
+  if ((status === "none" || status === "social") && parked) {
+    return [
+      hello,
+      `Reparei que o domínio ${parked}, com o vosso nome, está registado mas sem nenhum site ativo. Se for vosso, é uma oportunidade perdida: quem vos procura no Google não encontra nada.`,
+      offer,
+      close,
+    ].join("\n\n");
+  }
   if (status === "none") {
     return [
       hello,
@@ -42,7 +54,7 @@ export function buildPitch(lead: Lead, status: WebsiteStatus, audit?: AuditResul
     ].join("\n\n");
   }
 
-  const host = lead.website ? displayHost(lead.website) : "o vosso site";
+  const host = website ? displayHost(website) : "o vosso site";
   let issues: string[] = [];
   if (audit && !audit.reachable) {
     issues = ["o site não está acessível neste momento"];

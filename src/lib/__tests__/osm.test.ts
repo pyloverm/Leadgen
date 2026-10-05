@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { classifyOsm } from "../categories";
 import { haversine, isInPortugal, parseCoordinates } from "../geo";
-import { dedupeLeads, markChains, opportunity, websiteStatus } from "../leads";
+import { buildLeadView, dedupeLeads, markChains } from "../leads";
 import { buildOverpassQuery, elementToLead } from "../providers/overpass";
 import type { Lead, SearchParams } from "../types";
 import { isNotARealWebsite, normalizeUrl, splitWebsite } from "../urls";
@@ -11,7 +11,6 @@ const params: SearchParams = {
   lon: -8.6731,
   radius: 500,
   groups: ["food", "shops", "health_beauty"],
-  source: "osm",
   excludeChains: false,
 };
 
@@ -100,8 +99,10 @@ describe("overpass", () => {
       isChain: false,
     });
     expect(lead!.distance).toBeLessThan(100);
-    expect(websiteStatus(lead!, undefined, false)).toBe("social");
-    expect(opportunity("social")).toBe("hot");
+    expect(lead!.city).toBe("Lagos");
+    const view = buildLeadView(lead!, {}, {});
+    expect(view.status).toBe("social");
+    expect(view.opportunity).toBe("hot");
   });
 
   it("ignores categories that were not requested", () => {
@@ -113,7 +114,6 @@ describe("overpass", () => {
 describe("leads", () => {
   const lead = (over: Partial<Lead>): Lead => ({
     id: Math.random().toString(),
-    source: "osm",
     name: "X",
     category: "Café",
     group: "food",
